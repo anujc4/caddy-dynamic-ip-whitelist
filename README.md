@@ -47,7 +47,12 @@ auth.example.com {
 
 # Protected service — only whitelisted IPs can access
 app.example.com {
-    @allowed ipgate
+    @allowed {
+        ipgate {
+            allow 192.168.1.0/24
+            allow 172.16.0.0/12
+        }
+    }
     handle @allowed {
         reverse_proxy app-backend:3000
     }
@@ -70,10 +75,20 @@ app.example.com {
 
 ### ipgate (matcher)
 
-No configuration. Matches if the client IP is in the whitelist.
+Matches if the client IP is in the whitelist or in a allow CIDR range.
+
+| Subdirective | Required | Description                                        |
+| ------------ | -------- | -------------------------------------------------- |
+| `allow`      | no       | CIDR ranges always allowed (e.g. `192.168.1.0/24`) |
 
 ```caddy
-@allowed ipgate
+@allowed {
+    ipgate {
+        allow 192.168.1.0/24
+        allow 172.16.0.0/12
+        allow 10.0.0.0/8
+    }
+}
 ```
 
 ## Admin API
