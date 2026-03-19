@@ -75,3 +75,34 @@ No configuration. Matches if the client IP is in the whitelist.
 ```caddy
 @allowed ipgate
 ```
+
+## Admin API
+
+Endpoints are available on Caddy's [admin API](https://caddyserver.com/docs/api) (default `localhost:2019`).
+
+### List all whitelisted IPs
+
+```bash
+curl localhost:2019/ipgate/whitelist
+```
+
+```json
+{
+  "count": 1,
+  "entries": [
+    {"ip": "127.0.0.1", "expires": "2026-03-19T22:00:00Z"}
+  ]
+}
+```
+
+### Remove a single IP
+
+```bash
+curl -X DELETE localhost:2019/ipgate/whitelist/127.0.0.1
+```
+
+### Remove all IPs
+
+```bash
+curl -X DELETE localhost:2019/ipgate/whitelist
+```
