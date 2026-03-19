@@ -55,6 +55,40 @@ func (w *ipWhitelist) Sweep() int {
 	return pruned
 }
 
+// Delete removes a single IP from the whitelist. Returns true if it existed.
+func (w *ipWhitelist) Delete(ip string) bool {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	_, ok := w.entries[ip]
+	if ok {
+		delete(w.entries, ip)
+	}
+	return ok
+}
+
+// Clear removes all entries from the whitelist and returns the count removed.
+func (w *ipWhitelist) Clear() int {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	n := len(w.entries)
+	w.entries = make(map[string]time.Time)
+	return n
+}
+
+// Entries returns a snapshot of all non-expired entries.
+func (w *ipWhitelist) Entries() map[string]time.Time {
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+	now := time.Now()
+	result := make(map[string]time.Time, len(w.entries))
+	for ip, expiry := range w.entries {
+		if now.Before(expiry) {
+			result[ip] = expiry
+		}
+	}
+	return result
+}
+
 // Count returns the total number of entries (including expired).
 func (w *ipWhitelist) Count() int {
 	w.mu.RLock()
