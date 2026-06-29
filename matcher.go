@@ -2,7 +2,6 @@ package ipgate
 
 import (
 	"fmt"
-	"net"
 	"net/http"
 	"net/netip"
 
@@ -79,10 +78,7 @@ func (m *MatchIPGate) Match(r *http.Request) bool {
 // MatchWithError returns true if the client IP is whitelisted or
 // falls within a allow CIDR range.
 func (m *MatchIPGate) MatchWithError(r *http.Request) (bool, error) {
-	ip, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		ip = r.RemoteAddr
-	}
+	ip := clientIP(r)
 
 	addr, err := netip.ParseAddr(ip)
 	if err == nil {

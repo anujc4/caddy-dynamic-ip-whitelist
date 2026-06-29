@@ -3,7 +3,6 @@ package ipgate
 import (
 	"context"
 	"fmt"
-	"net"
 	"net/http"
 	"time"
 
@@ -124,10 +123,7 @@ func (t *Trigger) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddyht
 	err := next.ServeHTTP(rec, r)
 
 	if rec.status == t.MatchStatus {
-		ip, _, splitErr := net.SplitHostPort(r.RemoteAddr)
-		if splitErr != nil {
-			ip = r.RemoteAddr
-		}
+		ip := clientIP(r)
 		t.whitelist.Add(ip, time.Duration(t.TTL))
 		t.logger.Info("ip whitelisted",
 			zap.String("ip", ip),

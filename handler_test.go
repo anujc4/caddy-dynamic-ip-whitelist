@@ -92,6 +92,33 @@ func TestTrigger_IgnoresNonMatchingStatus(t *testing.T) {
 	}
 }
 
+func TestTrigger_WhitelistsResolvedClientIP(t *testing.T) {
+	wl := newIPWhitelist()
+	trigger := &Trigger{
+		MatchPath:   "/auth/callback",
+		MatchStatus: 200,
+		TTL:         caddy.Duration(1 * time.Hour),
+		whitelist:   wl,
+		logger:      zap.NewNop(),
+	}
+
+	r, _ := http.NewRequest("POST", "http://example.com/auth/callback", nil)
+	r.RemoteAddr = "172.69.224.131:443"
+	r = withClientIPVar(r, "163.116.177.107")
+	w := httptest.NewRecorder()
+
+	if err := trigger.ServeHTTP(w, r, stubHandler{status: 200}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if !wl.IsAllowed("163.116.177.107") {
+		t.Error("expected resolved visitor IP to be whitelisted")
+	}
+	if wl.IsAllowed("172.69.224.131") {
+		t.Error("proxy connecting IP must not be whitelisted")
+	}
+}
+
 func TestStatusRecorder_CapturesStatus(t *testing.T) {
 	w := httptest.NewRecorder()
 	rec := &statusRecorder{

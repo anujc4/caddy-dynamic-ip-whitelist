@@ -123,3 +123,33 @@ func TestMatchIPGate_AllowTakesPrecedence(t *testing.T) {
 		t.Error("expected allow to pass IP not in whitelist")
 	}
 }
+
+func TestMatchIPGate_UsesResolvedClientIP(t *testing.T) {
+	wl := newIPWhitelist()
+	wl.Add("163.116.177.107", 1*time.Hour)
+
+	m := &MatchIPGate{whitelist: wl}
+	r, _ := http.NewRequest("GET", "http://example.com/", nil)
+	r.RemoteAddr = "172.69.224.131:443"
+	r = withClientIPVar(r, "163.116.177.107")
+
+	if !m.Match(r) {
+		t.Error("expected match on resolved visitor IP, not the proxy connecting IP")
+	}
+}
+
+func TestMatchIPGate_AllowCIDR_ResolvedClientIP(t *testing.T) {
+	wl := newIPWhitelist()
+	m := &MatchIPGate{
+		whitelist: wl,
+		prefixes:  []netip.Prefix{netip.MustParsePrefix("192.168.1.0/24")},
+	}
+
+	r, _ := http.NewRequest("GET", "http://example.com/", nil)
+	r.RemoteAddr = "172.69.224.131:443"
+	r = withClientIPVar(r, "192.168.1.50")
+
+	if !m.Match(r) {
+		t.Error("expected allow-CIDR match on resolved visitor IP")
+	}
+}
