@@ -1,6 +1,6 @@
 module github.com/anujc4/caddy-dynamic-ip-whitelist
 
-go 1.26.0
+go 1.27.3
 
 require (
 	github.com/caddyserver/caddy/v2 v2.11.7
