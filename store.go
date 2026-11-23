@@ -22,11 +22,14 @@ func newIPWhitelist() *ipWhitelist {
 }
 
 // Add whitelists an IP for the given duration. If the IP already exists,
-// its expiry is replaced.
-func (w *ipWhitelist) Add(ip string, ttl time.Duration) {
+// its expiry is replaced. Returns true if the IP was absent or expired.
+func (w *ipWhitelist) Add(ip string, ttl time.Duration) bool {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	w.entries[ip] = time.Now().Add(ttl)
+	now := time.Now()
+	expiry, ok := w.entries[ip]
+	w.entries[ip] = now.Add(ttl)
+	return !ok || !now.Before(expiry)
 }
 
 // IsAllowed returns true if the IP is in the whitelist and has not expired.

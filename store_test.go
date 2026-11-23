@@ -115,3 +115,20 @@ func TestIPWhitelist_Count(t *testing.T) {
 		t.Errorf("expected 2, got %d", w.Count())
 	}
 }
+
+func TestIPWhitelist_AddReportsNew(t *testing.T) {
+	w := newIPWhitelist()
+
+	if !w.Add("1.2.3.4", 1*time.Millisecond) {
+		t.Error("expected first add to report new")
+	}
+	if w.Add("1.2.3.4", 1*time.Millisecond) {
+		t.Error("expected refresh to not report new")
+	}
+
+	time.Sleep(5 * time.Millisecond)
+
+	if !w.Add("1.2.3.4", 1*time.Hour) {
+		t.Error("expected add after expiry to report new")
+	}
+}

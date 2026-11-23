@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/netip"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/caddyserver/caddy/v2"
@@ -41,6 +43,8 @@ func init() {
 //	    match_status <code>
 //	    ttl          <duration>
 //	    sweep_interval <duration>
+//	    notify_url     <url>
+//	    notify_token   <token>
 //	}
 type Trigger struct {
 	// The request paths that signal a successful authentication.
@@ -60,7 +64,21 @@ type Trigger struct {
 	// whitelist. Default: 1m.
 	SweepInterval caddy.Duration `json:"sweep_interval,omitempty"`
 
+	// URL to POST a plain-text notification to when a new IP is
+	// whitelisted. Supports {env.*} placeholders. Optional.
+	NotifyURL string `json:"notify_url,omitempty"`
+
+	// Bearer token sent with notifications. Supports {env.*}
+	// placeholders. Optional.
+	NotifyToken string `json:"notify_token,omitempty"`
+
+	// Resolved notify values, kept out of the JSON config so the
+	// admin API never exposes them.
+	notifyURL   string
+	notifyToken string
+
 	whitelist *ipWhitelist
+	notifier  *notifier
 	logger    *zap.Logger
 }
 
@@ -90,6 +108,14 @@ func (t *Trigger) Provision(ctx caddy.Context) error {
 
 	go t.runSweeper(ctx)
 
+	if t.NotifyURL != "" {
+		repl := caddy.NewReplacer()
+		t.notifyURL = repl.ReplaceKnown(t.NotifyURL, "")
+		t.notifyToken = repl.ReplaceKnown(t.NotifyToken, "")
+		t.notifier = newNotifier(t.notifyURL, t.notifyToken, t.logger)
+		t.notifier.start(ctx)
+	}
+
 	return nil
 }
 
@@ -104,11 +130,26 @@ func (t *Trigger) Validate() error {
 	if t.TTL == 0 {
 		return fmt.Errorf("ttl is required")
 	}
+	if t.NotifyToken != "" && t.NotifyURL == "" {
+		return fmt.Errorf("notify_token requires notify_url")
+	}
+	if t.NotifyURL != "" {
+		if err := validateNotifyURL(t.notifyURL); err != nil {
+			return err
+		}
+		if strings.ContainsAny(t.notifyToken, "\r\n") {
+			return fmt.Errorf("notify_token must not contain newlines")
+		}
+	}
 	return nil
 }
 
-// Cleanup decrements the reference count on the shared whitelist.
+// Cleanup stops the notifier and decrements the reference count on the
+// shared whitelist.
 func (t *Trigger) Cleanup() error {
+	if t.notifier != nil {
+		t.notifier.stop()
+	}
 	_, _ = store.Delete(storeKey)
 	return nil
 }
@@ -126,14 +167,30 @@ func (t *Trigger) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddyht
 
 	if rec.status == t.MatchStatus {
 		ip := clientIP(r)
-		t.whitelist.Add(ip, time.Duration(t.TTL))
-		t.logger.Info("ip whitelisted",
-			zap.String("ip", ip),
-			zap.Duration("ttl", time.Duration(t.TTL)),
-		)
+		ttl := time.Duration(t.TTL)
+		if !t.whitelist.Add(ip, ttl) {
+			t.logger.Debug("ip whitelist refreshed", zap.String("ip", ip), zap.Duration("ttl", ttl))
+			return err
+		}
+		t.logger.Info("ip whitelisted", zap.String("ip", ip), zap.Duration("ttl", ttl))
+		if t.notifier != nil {
+			t.notify(ip, ttl)
+		}
 	}
 
 	return err
+}
+
+// notify queues a notification for a newly whitelisted IP. Only a parsed
+// IP goes into the message, never a raw request value.
+func (t *Trigger) notify(ip string, ttl time.Duration) {
+	addr, err := netip.ParseAddr(ip)
+	if err != nil {
+		return
+	}
+	if !t.notifier.enqueue(fmt.Sprintf("%s whitelisted for %s", addr, ttl)) {
+		t.logger.Debug("notification dropped, queue full")
+	}
 }
 
 // UnmarshalCaddyfile implements caddyfile.Unmarshaler.
@@ -174,6 +231,16 @@ func (t *Trigger) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 					return d.Errf("invalid sweep_interval: %s", d.Val())
 				}
 				t.SweepInterval = caddy.Duration(dur)
+			case "notify_url":
+				if !d.NextArg() {
+					return d.ArgErr()
+				}
+				t.NotifyURL = d.Val()
+			case "notify_token":
+				if !d.NextArg() {
+					return d.ArgErr()
+				}
+				t.NotifyToken = d.Val()
 			default:
 				return d.Errf("unrecognized subdirective: %s", d.Val())
 			}

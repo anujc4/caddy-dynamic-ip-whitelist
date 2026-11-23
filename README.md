@@ -72,6 +72,8 @@ app.example.com {
 | `match_status`   | yes      | HTTP status code confirming auth success          |
 | `ttl`            | yes      | Duration to whitelist the IP (e.g. `4h`, `30m`)   |
 | `sweep_interval` | no       | How often to prune expired entries (default `1m`) |
+| `notify_url`     | no       | URL to POST to when a new IP is whitelisted (refreshes don't notify). Supports `{env.*}` |
+| `notify_token`   | no       | Bearer token sent with notifications. Supports `{env.*}` |
 
 ### ipgate (matcher)
 
