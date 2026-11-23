@@ -5,6 +5,8 @@ import (
 	"net/netip"
 	"testing"
 	"time"
+
+	"github.com/caddyserver/caddy/v2/caddyconfig/caddyfile"
 )
 
 func TestMatchIPGate_Allowed(t *testing.T) {
@@ -151,5 +153,39 @@ func TestMatchIPGate_AllowCIDR_ResolvedClientIP(t *testing.T) {
 
 	if !m.Match(r) {
 		t.Error("expected allow-CIDR match on resolved visitor IP")
+	}
+}
+
+func TestMatchIPGate_MappedIPv4MatchesAllowCIDR(t *testing.T) {
+	m := &MatchIPGate{
+		whitelist: newIPWhitelist(),
+		prefixes:  []netip.Prefix{netip.MustParsePrefix("192.168.1.0/24")},
+	}
+
+	r, _ := http.NewRequest("GET", "http://example.com/", nil)
+	r.RemoteAddr = "[::ffff:192.168.1.50]:12345"
+
+	if !m.Match(r) {
+		t.Error("expected IPv4-mapped IPv6 address to match IPv4 allow CIDR")
+	}
+}
+
+func TestMatchIPGate_InvalidClientIPDenied(t *testing.T) {
+	m := &MatchIPGate{whitelist: newIPWhitelist()}
+
+	r, _ := http.NewRequest("GET", "http://example.com/", nil)
+	r.RemoteAddr = "@"
+
+	if m.Match(r) {
+		t.Error("expected no match without a valid client IP")
+	}
+}
+
+func TestMatchIPGate_UnmarshalCaddyfileRejectsInlineArgs(t *testing.T) {
+	d := caddyfile.NewTestDispenser(`ipgate allow 192.168.1.0/24`)
+
+	var m MatchIPGate
+	if err := m.UnmarshalCaddyfile(d); err == nil {
+		t.Error("expected inline arguments to be rejected")
 	}
 }

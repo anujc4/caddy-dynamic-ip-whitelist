@@ -15,6 +15,9 @@ type ipWhitelist struct {
 	entries map[string]time.Time
 }
 
+// sharedWhitelist is shared by all modules and persists across reloads.
+var sharedWhitelist = newIPWhitelist()
+
 func newIPWhitelist() *ipWhitelist {
 	return &ipWhitelist{
 		entries: make(map[string]time.Time),

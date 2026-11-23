@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/netip"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -15,10 +16,6 @@ import (
 	"github.com/caddyserver/caddy/v2/modules/caddyhttp"
 	"go.uber.org/zap"
 )
-
-var store = caddy.NewUsagePool()
-
-const storeKey = "ipgate"
 
 func init() {
 	caddy.RegisterModule(Trigger{})
@@ -45,6 +42,7 @@ func init() {
 //	    sweep_interval <duration>
 //	    notify_url     <url>
 //	    notify_token   <token>
+//	    ignore_header  <name> [<name> ...]
 //	}
 type Trigger struct {
 	// The request paths that signal a successful authentication.
@@ -72,6 +70,10 @@ type Trigger struct {
 	// placeholders. Optional.
 	NotifyToken string `json:"notify_token,omitempty"`
 
+	// Request headers that stop a request from whitelisting its IP.
+	// Example: X-API-Key, Authorization
+	IgnoreHeaders []string `json:"ignore_headers,omitempty"`
+
 	// Resolved notify values, kept out of the JSON config so the
 	// admin API never exposes them.
 	notifyURL   string
@@ -90,31 +92,34 @@ func (Trigger) CaddyModule() caddy.ModuleInfo {
 	}
 }
 
-// Provision sets up the trigger, loads or creates the shared whitelist,
-// and starts the background sweeper goroutine.
+// Provision sets up the trigger and starts the sweeper and notifier.
 func (t *Trigger) Provision(ctx caddy.Context) error {
 	t.logger = ctx.Logger()
 
+	// Checked before the sweeper starts since NewTicker panics on it.
+	if t.SweepInterval < 0 {
+		return fmt.Errorf("sweep_interval must be positive")
+	}
 	if t.SweepInterval == 0 {
 		t.SweepInterval = caddy.Duration(1 * time.Minute)
 	}
 
-	wl := newIPWhitelist()
-	val, loaded := store.LoadOrStore(storeKey, wl)
-	if loaded {
-		wl = val.(*ipWhitelist)
-	}
-	t.whitelist = wl
-
-	go t.runSweeper(ctx)
+	t.whitelist = sharedWhitelist
 
 	if t.NotifyURL != "" {
 		repl := caddy.NewReplacer()
-		t.notifyURL = repl.ReplaceKnown(t.NotifyURL, "")
-		t.notifyToken = repl.ReplaceKnown(t.NotifyToken, "")
+		var err error
+		if t.notifyURL, err = repl.ReplaceOrErr(t.NotifyURL, true, true); err != nil {
+			return fmt.Errorf("notify_url: %v", err)
+		}
+		if t.notifyToken, err = repl.ReplaceOrErr(t.NotifyToken, true, true); err != nil {
+			return fmt.Errorf("notify_token: %v", err)
+		}
 		t.notifier = newNotifier(t.notifyURL, t.notifyToken, t.logger)
 		t.notifier.start(ctx)
 	}
+
+	go t.runSweeper(ctx)
 
 	return nil
 }
@@ -127,8 +132,14 @@ func (t *Trigger) Validate() error {
 	if t.MatchStatus == 0 {
 		return fmt.Errorf("match_status is required")
 	}
+	if t.MatchStatus < 100 || t.MatchStatus > 599 {
+		return fmt.Errorf("match_status must be between 100 and 599")
+	}
 	if t.TTL == 0 {
 		return fmt.Errorf("ttl is required")
+	}
+	if t.TTL < 0 {
+		return fmt.Errorf("ttl must be positive")
 	}
 	if t.NotifyToken != "" && t.NotifyURL == "" {
 		return fmt.Errorf("notify_token requires notify_url")
@@ -144,13 +155,11 @@ func (t *Trigger) Validate() error {
 	return nil
 }
 
-// Cleanup stops the notifier and decrements the reference count on the
-// shared whitelist.
+// Cleanup stops the notifier.
 func (t *Trigger) Cleanup() error {
 	if t.notifier != nil {
 		t.notifier.stop()
 	}
-	_, _ = store.Delete(storeKey)
 	return nil
 }
 
@@ -158,7 +167,7 @@ func (t *Trigger) Cleanup() error {
 // returns the expected status code, the client IP is added to the whitelist.
 // For non-matching paths, requests pass through without overhead.
 func (t *Trigger) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddyhttp.Handler) error {
-	if !slices.Contains(t.MatchPaths, r.URL.Path) {
+	if !slices.Contains(t.MatchPaths, r.URL.Path) || t.hasIgnoredHeader(r) {
 		return next.ServeHTTP(w, r)
 	}
 
@@ -167,6 +176,10 @@ func (t *Trigger) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddyht
 
 	if rec.status == t.MatchStatus {
 		ip := clientIP(r)
+		if ip == "" {
+			t.logger.Debug("no valid client ip, not whitelisting")
+			return err
+		}
 		ttl := time.Duration(t.TTL)
 		if !t.whitelist.Add(ip, ttl) {
 			t.logger.Debug("ip whitelist refreshed", zap.String("ip", ip), zap.Duration("ttl", ttl))
@@ -179,6 +192,15 @@ func (t *Trigger) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddyht
 	}
 
 	return err
+}
+
+func (t *Trigger) hasIgnoredHeader(r *http.Request) bool {
+	for _, h := range t.IgnoreHeaders {
+		if len(r.Header.Values(h)) > 0 {
+			return true
+		}
+	}
+	return false
 }
 
 // notify queues a notification for a newly whitelisted IP. Only a parsed
@@ -196,6 +218,9 @@ func (t *Trigger) notify(ip string, ttl time.Duration) {
 // UnmarshalCaddyfile implements caddyfile.Unmarshaler.
 func (t *Trigger) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 	for d.Next() {
+		if d.NextArg() {
+			return d.ArgErr()
+		}
 		for d.NextBlock(0) {
 			switch d.Val() {
 			case "match_path":
@@ -208,8 +233,8 @@ func (t *Trigger) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 				if !d.NextArg() {
 					return d.ArgErr()
 				}
-				var status int
-				if _, err := fmt.Sscanf(d.Val(), "%d", &status); err != nil {
+				status, err := strconv.Atoi(d.Val())
+				if err != nil {
 					return d.Errf("invalid status code: %s", d.Val())
 				}
 				t.MatchStatus = status
@@ -241,6 +266,12 @@ func (t *Trigger) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 					return d.ArgErr()
 				}
 				t.NotifyToken = d.Val()
+			case "ignore_header":
+				args := d.RemainingArgs()
+				if len(args) == 0 {
+					return d.ArgErr()
+				}
+				t.IgnoreHeaders = append(t.IgnoreHeaders, args...)
 			default:
 				return d.Errf("unrecognized subdirective: %s", d.Val())
 			}

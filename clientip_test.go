@@ -52,3 +52,31 @@ func TestClientIP_NoPort(t *testing.T) {
 		t.Errorf("expected raw RemoteAddr when no port, got %q", got)
 	}
 }
+
+func TestClientIP_Canonicalizes(t *testing.T) {
+	tests := []struct {
+		remoteAddr string
+		want       string
+	}{
+		{"[::ffff:1.2.3.4]:443", "1.2.3.4"},
+		{"[2001:DB8::1]:443", "2001:db8::1"},
+		{"[fe80::1%eth0]:443", "fe80::1"},
+	}
+	for _, tt := range tests {
+		r, _ := http.NewRequest("GET", "http://example.com/", nil)
+		r.RemoteAddr = tt.remoteAddr
+		if got := clientIP(r); got != tt.want {
+			t.Errorf("clientIP(%q): expected %q, got %q", tt.remoteAddr, tt.want, got)
+		}
+	}
+}
+
+func TestClientIP_InvalidReturnsEmpty(t *testing.T) {
+	for _, remoteAddr := range []string{"@", "", "not-an-ip:443"} {
+		r, _ := http.NewRequest("GET", "http://example.com/", nil)
+		r.RemoteAddr = remoteAddr
+		if got := clientIP(r); got != "" {
+			t.Errorf("clientIP(%q): expected empty, got %q", remoteAddr, got)
+		}
+	}
+}

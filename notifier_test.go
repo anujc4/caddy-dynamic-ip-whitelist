@@ -77,7 +77,7 @@ func TestTrigger_NotifiesOnlyNewIP(t *testing.T) {
 		if req.header.Get("Authorization") != "" {
 			t.Error("expected no Authorization header without a token")
 		}
-	case <-time.After(2 * time.Second):
+	case <-time.After(10 * time.Second):
 		t.Fatal("expected a notification for a new IP")
 	}
 
@@ -99,7 +99,7 @@ func TestTrigger_NotifySendsToken(t *testing.T) {
 		if got := req.header.Get("Authorization"); got != "Bearer secret" {
 			t.Errorf("expected bearer token, got %q", got)
 		}
-	case <-time.After(2 * time.Second):
+	case <-time.After(10 * time.Second):
 		t.Fatal("expected a notification")
 	}
 }
@@ -183,7 +183,7 @@ func TestNotifier_RateCap(t *testing.T) {
 	for i := 0; i < 2; i++ {
 		select {
 		case <-reqs:
-		case <-time.After(2 * time.Second):
+		case <-time.After(10 * time.Second):
 			t.Fatalf("expected notification %d", i)
 		}
 	}

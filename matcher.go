@@ -60,12 +60,7 @@ func (m *MatchIPGate) Provision(ctx caddy.Context) error {
 		m.prefixes = append(m.prefixes, prefix)
 	}
 
-	wl := newIPWhitelist()
-	val, loaded := store.LoadOrStore(storeKey, wl)
-	if loaded {
-		wl = val.(*ipWhitelist)
-	}
-	m.whitelist = wl
+	m.whitelist = sharedWhitelist
 	return nil
 }
 
@@ -79,19 +74,20 @@ func (m *MatchIPGate) Match(r *http.Request) bool {
 // falls within a allow CIDR range.
 func (m *MatchIPGate) MatchWithError(r *http.Request) (bool, error) {
 	ip := clientIP(r)
+	if ip == "" {
+		return false, nil
+	}
 
-	addr, err := netip.ParseAddr(ip)
-	if err == nil {
-		for _, prefix := range m.prefixes {
-			if prefix.Contains(addr) {
-				if m.logger != nil {
-					m.logger.Debug("ipgate allow match",
-						zap.String("ip", ip),
-						zap.String("cidr", prefix.String()),
-					)
-				}
-				return true, nil
+	addr := netip.MustParseAddr(ip)
+	for _, prefix := range m.prefixes {
+		if prefix.Contains(addr) {
+			if m.logger != nil {
+				m.logger.Debug("ipgate allow match",
+					zap.String("ip", ip),
+					zap.String("cidr", prefix.String()),
+				)
 			}
+			return true, nil
 		}
 	}
 
@@ -109,9 +105,14 @@ func (m *MatchIPGate) MatchWithError(r *http.Request) (bool, error) {
 //
 // Syntax:
 //
-//	ipgate [allow <cidr> ...] [allow <cidr> ...]
+//	ipgate {
+//	    allow <cidr> [<cidr> ...]
+//	}
 func (m *MatchIPGate) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 	for d.Next() {
+		if d.NextArg() {
+			return d.ArgErr()
+		}
 		for d.NextBlock(0) {
 			switch d.Val() {
 			case "allow":

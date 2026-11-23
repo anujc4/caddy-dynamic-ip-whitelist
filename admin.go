@@ -33,20 +33,9 @@ func (Admin) CaddyModule() caddy.ModuleInfo {
 	}
 }
 
-// Provision loads the shared whitelist from the usage pool.
+// Provision attaches the shared whitelist.
 func (a *Admin) Provision(_ caddy.Context) error {
-	wl := newIPWhitelist()
-	val, loaded := store.LoadOrStore(storeKey, wl)
-	if loaded {
-		wl = val.(*ipWhitelist)
-	}
-	a.whitelist = wl
-	return nil
-}
-
-// Cleanup decrements the reference count on the shared whitelist.
-func (a *Admin) Cleanup() error {
-	_, _ = store.Delete(storeKey)
+	a.whitelist = sharedWhitelist
 	return nil
 }
 
@@ -112,11 +101,18 @@ func (a *Admin) handleWhitelistIP(w http.ResponseWriter, r *http.Request) error 
 		}
 	}
 
-	ip := strings.TrimPrefix(r.URL.Path, "/ipgate/whitelist/")
-	if ip == "" {
+	raw := strings.TrimPrefix(r.URL.Path, "/ipgate/whitelist/")
+	if raw == "" {
 		return caddy.APIError{
 			HTTPStatus: http.StatusBadRequest,
 			Err:        fmt.Errorf("ip address required"),
+		}
+	}
+	ip := canonicalIP(raw)
+	if ip == "" {
+		return caddy.APIError{
+			HTTPStatus: http.StatusBadRequest,
+			Err:        fmt.Errorf("invalid ip address"),
 		}
 	}
 
@@ -134,5 +130,4 @@ func (a *Admin) handleWhitelistIP(w http.ResponseWriter, r *http.Request) error 
 var (
 	_ caddy.AdminRouter = (*Admin)(nil)
 	_ caddy.Provisioner = (*Admin)(nil)
-	_ caddy.CleanerUpper = (*Admin)(nil)
 )

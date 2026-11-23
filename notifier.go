@@ -62,6 +62,7 @@ func (n *notifier) start(ctx context.Context) {
 func (n *notifier) stop() {
 	n.cancel()
 	<-n.done
+	n.client.CloseIdleConnections()
 }
 
 // enqueue queues a message without blocking. Returns false if dropped.

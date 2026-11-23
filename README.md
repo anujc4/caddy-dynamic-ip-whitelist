@@ -74,6 +74,7 @@ app.example.com {
 | `sweep_interval` | no       | How often to prune expired entries (default `1m`) |
 | `notify_url`     | no       | URL to POST to when a new IP is whitelisted (refreshes don't notify). Supports `{env.*}` |
 | `notify_token`   | no       | Bearer token sent with notifications. Supports `{env.*}` |
+| `ignore_header`  | no       | Request headers that stop a request from whitelisting (e.g. `X-API-Key Authorization`) |
 
 ### ipgate (matcher)
 
