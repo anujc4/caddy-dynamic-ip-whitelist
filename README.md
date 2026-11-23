@@ -6,7 +6,7 @@ A Caddy module to dynamically whitelist IPs based on your auth provider. Whiteli
 
 Two Caddy modules share an in-memory IP whitelist:
 
-- **`ipgate_trigger`** (handler) — watches upstream responses on a configured path. When the response status matches, the client IP is whitelisted with a TTL.
+- **`ipgate_trigger`** (handler) — watches upstream responses on configured paths. When the response status matches, the client IP is whitelisted with a TTL.
 - **`ipgate`** (matcher) — returns true if the client IP is in the whitelist.
 
 ```plaintext
@@ -36,7 +36,7 @@ xcaddy build --with github.com/anujc4/caddy-dynamic-ip-whitelist
 # Auth endpoint — trigger whitelists IP on successful login
 auth.example.com {
     ipgate_trigger {
-        match_path   /api/webauthn/login/finish
+        match_path   /api/auth/login /api/me
         match_status 200
         ttl          4h
         sweep_interval 1m  # optional, default 1m
@@ -68,7 +68,7 @@ app.example.com {
 
 | Directive        | Required | Description                                       |
 | ---------------- | -------- | ------------------------------------------------- |
-| `match_path`     | yes      | Request path that signals successful auth         |
+| `match_path`     | yes      | Request paths that signal successful auth         |
 | `match_status`   | yes      | HTTP status code confirming auth success          |
 | `ttl`            | yes      | Duration to whitelist the IP (e.g. `4h`, `30m`)   |
 | `sweep_interval` | no       | How often to prune expired entries (default `1m`) |

@@ -3,7 +3,9 @@ package ipgate
 import (
 	"context"
 	"fmt"
+	"io"
 	"net/http"
+	"slices"
 	"time"
 
 	"github.com/caddyserver/caddy/v2"
@@ -35,15 +37,15 @@ func init() {
 // Caddyfile syntax:
 //
 //	ipgate_trigger {
-//	    match_path   <path>
+//	    match_path   <path> [<path> ...]
 //	    match_status <code>
 //	    ttl          <duration>
 //	    sweep_interval <duration>
 //	}
 type Trigger struct {
-	// The request path that signals a successful authentication.
-	// Example: /api/webauthn/login/finish
-	MatchPath string `json:"match_path"`
+	// The request paths that signal a successful authentication.
+	// Example: /api/auth/login, /api/me
+	MatchPaths []string `json:"match_paths"`
 
 	// The HTTP status code that confirms authentication succeeded.
 	// Example: 200
@@ -93,7 +95,7 @@ func (t *Trigger) Provision(ctx caddy.Context) error {
 
 // Validate ensures that all required fields are configured.
 func (t *Trigger) Validate() error {
-	if t.MatchPath == "" {
+	if len(t.MatchPaths) == 0 {
 		return fmt.Errorf("match_path is required")
 	}
 	if t.MatchStatus == 0 {
@@ -111,11 +113,11 @@ func (t *Trigger) Cleanup() error {
 	return nil
 }
 
-// ServeHTTP intercepts responses to the configured path. If the upstream
+// ServeHTTP intercepts responses to the configured paths. If the upstream
 // returns the expected status code, the client IP is added to the whitelist.
 // For non-matching paths, requests pass through without overhead.
 func (t *Trigger) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddyhttp.Handler) error {
-	if r.URL.Path != t.MatchPath {
+	if !slices.Contains(t.MatchPaths, r.URL.Path) {
 		return next.ServeHTTP(w, r)
 	}
 
@@ -140,10 +142,11 @@ func (t *Trigger) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 		for d.NextBlock(0) {
 			switch d.Val() {
 			case "match_path":
-				if !d.NextArg() {
+				args := d.RemainingArgs()
+				if len(args) == 0 {
 					return d.ArgErr()
 				}
-				t.MatchPath = d.Val()
+				t.MatchPaths = append(t.MatchPaths, args...)
 			case "match_status":
 				if !d.NextArg() {
 					return d.ArgErr()
@@ -202,10 +205,29 @@ type statusRecorder struct {
 	status int
 }
 
-// WriteHeader captures the status code and delegates to the wrapped writer.
+// WriteHeader captures the final (non-1xx) status code and delegates to the
+// wrapped writer.
 func (r *statusRecorder) WriteHeader(code int) {
-	r.status = code
+	if code >= 200 && r.status == 0 {
+		r.status = code
+	}
 	r.ResponseWriterWrapper.WriteHeader(code)
+}
+
+// Write records an implicit 200 if WriteHeader was not called.
+func (r *statusRecorder) Write(b []byte) (int, error) {
+	if r.status == 0 {
+		r.status = http.StatusOK
+	}
+	return r.ResponseWriterWrapper.Write(b)
+}
+
+// ReadFrom records an implicit 200 if WriteHeader was not called.
+func (r *statusRecorder) ReadFrom(src io.Reader) (int64, error) {
+	if r.status == 0 {
+		r.status = http.StatusOK
+	}
+	return r.ResponseWriterWrapper.ReadFrom(src)
 }
 
 var (
